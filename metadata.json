@@ -1,0 +1,8 @@
+{
+  "name": "Mental Wellness AI",
+  "description": "An advanced mental wellness companion focused on emotional regulation, self-awareness, and practical daily guidance through multimodal AI support.",
+  "requestFramePermissions": [
+    "camera",
+    "microphone"
+  ]
+}
