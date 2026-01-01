@@ -68,8 +68,14 @@ const MainView: React.FC<MainViewProps> = ({ userState, onUpdateTone, onToggleSt
   const processGuidance = async (feeling: string, role: string | undefined, image: string | null) => {
     setIsTyping(true);
     try {
+      // Pass the current messages as history. 
+      // Note: The new user message might not be in 'messages' state yet if called immediately after setMessages,
+      // but for the logic of 'history', passing the established history is often sufficient, 
+      // or we can append the new prompt in the service layer if needed.
+      // In this implementation, the service accepts the history array.
       const guidance = await getWellnessGuidance(
         feeling,
+        messages, 
         userState.tone,
         userState.isStepByStepMode,
         image || undefined,
@@ -115,6 +121,12 @@ const MainView: React.FC<MainViewProps> = ({ userState, onUpdateTone, onToggleSt
       image: selectedImage || undefined,
       timestamp: new Date(),
     };
+    
+    // We update the state, but we also need to trigger the API call.
+    // The API call inside processGuidance uses 'messages' state which is stale here.
+    // However, the service logic uses the 'input' (text) as the current prompt 
+    // and 'messages' (history) as context. This separation is actually correct 
+    // for the LLM prompt structure: History + Current Input.
     setMessages(prev => [...prev, userMessage]);
     setInputText('');
     

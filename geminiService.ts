@@ -1,25 +1,53 @@
 
 import { GoogleGenAI, Type } from "@google/genai";
-import { TonePreference, WellnessCondition, WellnessResponse } from "./types";
+import { TonePreference, WellnessCondition, WellnessResponse, ChatMessage } from "./types";
 
 const SYSTEM_INSTRUCTIONS = `
-You are an advanced Mental Wellness AI. Your goal is to provide soothing, practical guidance.
+You are a world-class Mental Wellness AI Companion. Your purpose is to provide deeply insightful, step-by-step therapeutic guidance.
+
+CORE FRAMEWORKS:
+1. **CBT (Cognitive Behavioral Therapy)**: Identify and challenge negative thought patterns.
+2. **Mindfulness & Somatic Grounding**: Use the body to regulate the mind (Vagus nerve stimulation, etc).
+3. **ACT (Acceptance and Commitment Therapy)**: Accept feelings without judgment and move towards values.
+4. **Neuroscience**: Explain *why* the brain is reacting this way (e.g., "Your amygdala is active...").
+
+STRICT LANGUAGE & STYLE GUIDELINES:
+1. **Tone**: Warm, Professional, Empathetic, Grounded.
+2. **Forbidden Words**: Do NOT use "honey", "sweetheart", "dear", "baby", "darling".
+3. **Forbidden Openers**: Do NOT start with "Oh,", "Ah,", "Hmm,". Start directly with validation.
+4. **Depth**: Go beyond "Drink water". Explain: "Drink cool water to stimulate the vagus nerve and reset your parasympathetic nervous system."
+5. **No Name Usage**: Do NOT use the user's name in the response body.
+
+RESPONSE ARCHITECTURE (JSON):
+- **condition**: Identify the emotional state.
+- **aiCommentary**: The conversational intro.
+   - *Phase 1*: Validate the feeling.
+   - *Phase 2*: Explain the biological/psychological mechanism (The "Why").
+   - *Phase 3*: Gentle transition to action.
+- **stepByStep**: A DETAILED, SEQUENTIAL PROTOCOL.
+   - Each string must be a full step including Action + Reasoning.
+   - Example: "**Physiological Reset**: Drink a glass of cold water to trigger the mammalian dive reflex, instantly lowering heart rate."
+- **immediateActions**: Quick, 5-second micro-actions (Quick hits).
+- **smallComforts**: Sensory items or environmental changes.
+- **youtubeResource**: A highly relevant YouTube video recommendation.
+   - **STRATEGY**: Search for a specific, high-quality video title (e.g. from TED, Headspace, Therapy in a Nutshell).
+   - **URL RULE**: To guarantee the link works, **ALWAYS** return a YouTube Search URL for that specific title.
+   - **FORMAT**: "https://www.youtube.com/results?search_query=" + Title (replace spaces with +).
+   - **FORBIDDEN**: DO NOT generate specific 'watch?v=' video IDs as they are often incorrect. Always use the search query format.
 
 IMAGE GENERATION LOGIC:
-- You must generate a 'visualizationPrompt' for a high-quality 3D render.
-- SUBJECT: A cute, friendly, stylized 3D character (Pixar/Disney style). NEVER use realistic humans.
-- COMPOSITION: Simple, clear, and high-contrast. The character should be clearly performing ONE wellness activity (e.g., sipping tea, stretching, breathing deeply, organizing a single item).
-- visualizationTitle: A very short (1-2 words), uppercase title like "STEP OUTSIDE", "5-MINUTE RULE", or "STAY HYDRATED".
-- visualizationPrompt: Describe a high-quality 3D render. Example: "A cute stylized 3D character in a cozy sweater holding a giant glass of sparkling water, bright sunny window background, Pixar style, cinematic lighting, soft colors."
+- Create a 'visualizationPrompt' for a high-quality 3D render.
+- **Goal**: Visually illustrate the *primary* advice/action using a cute character.
+- **Style**: "High-end 3D render, cute stylized character (Pixar/Nintendo style), soft volumetric lighting, 4k".
+- **Composition**: CENTERED subject, clean pastel background, minimalist.
 
-QUALITY STANDARDS:
-- **Tone**: Match the user's selected preference (Calm, Direct, or Motivational).
-- **Format**: Use "**Bold Title**: Description" for list items.
-- Output MUST be valid JSON.
+OUTPUT FORMAT:
+- Output MUST be valid JSON matching the schema.
 `;
 
 export const getWellnessGuidance = async (
   input: string,
+  history: ChatMessage[],
   tone: TonePreference,
   isStepByStep: boolean,
   imageBase64?: string,
@@ -30,32 +58,50 @@ export const getWellnessGuidance = async (
   let toneSpecifics = "";
   switch (tone) {
     case TonePreference.CalmGentle:
-      toneSpecifics = "VOICE: Soft, maternal, reassuring. Focus on gentle sensory resets.";
+      toneSpecifics = "VOICE: Soothing, slow-paced. Focus on somatic safety and nervous system regulation.";
       break;
     case TonePreference.DirectPractical:
-      toneSpecifics = "VOICE: Professional, concise. Focus on biological and cognitive maintenance.";
+      toneSpecifics = "VOICE: Clinical, precise, biological. Focus on neurochemistry and cognitive restructuring.";
       break;
     case TonePreference.Motivational:
-      toneSpecifics = "VOICE: High-energy, empowering. Focus on small wins and momentum.";
+      toneSpecifics = "VOICE: Coach-like, empowering. Focus on dopamine regulation, momentum, and agency.";
       break;
   }
 
+  // Format history
+  const recentHistory = history.slice(-10).map(msg => 
+    `${msg.role === 'user' ? 'User' : 'Assistant'}: ${msg.text}`
+  ).join('\n');
+
+  const roleInstruction = userRole && userRole !== 'Other' 
+    ? `USER ROLE: "${userRole}". Contextualize advice (e.g., Student = exam focus/burnout).`
+    : `USER ROLE: General.`;
+
   const prompt = `
-    User Input: "${input}"
-    Role: "${userRole || 'General'}"
-    Mode: ${isStepByStep ? 'Step-by-Step' : 'Holistic'}
+    PREVIOUS CONVERSATION:
+    ${recentHistory}
+
+    CURRENT USER INPUT: "${input}"
     
-    *** TONE INSTRUCTIONS ***
-    ${toneSpecifics}
+    METADATA:
+    - ${roleInstruction}
+    - Tone: ${toneSpecifics}
+    - REQUEST: Provide a DEEP, STEP-BY-STEP breakdown of how to navigate this emotion.
     
-    Generate a JSON response following the system instructions. Focus on ONE main visualizable concept for the image.
+    TASK:
+    Generate a JSON response.
+    1. **aiCommentary**: Provide a deep psychological insight into *why* they feel this way.
+    2. **stepByStep**: Provide 3-5 distinct, ordered steps. Start with physiological regulation (body), then move to cognitive reframing (mind), then practical action.
+    3. **visualizationPrompt**: A cute 3D character performing the *first* step of the protocol.
+    4. **youtubeResource**: Recommend a specific video title. Return a SEARCH URL (https://www.youtube.com/results?search_query=...) for it.
   `;
 
-  // 1. Text Logic
+  // 1. Text Logic with Google Search Tool enabled
   const textResponse = await ai.models.generateContent({
     model: "gemini-3-flash-preview",
     contents: { parts: [{ text: prompt }] },
     config: {
+      tools: [{ googleSearch: {} }], // Enable search to find real video titles
       systemInstruction: SYSTEM_INSTRUCTIONS,
       responseMimeType: "application/json",
       responseSchema: {
@@ -79,7 +125,7 @@ export const getWellnessGuidance = async (
           visualizationPrompt: { type: Type.STRING },
           visualizationTitle: { type: Type.STRING }
         },
-        required: ["condition", "aiCommentary", "visualizationPrompt", "visualizationTitle"]
+        required: ["condition", "aiCommentary", "visualizationPrompt", "visualizationTitle", "stepByStep", "youtubeResource"]
       }
     }
   });
@@ -88,17 +134,28 @@ export const getWellnessGuidance = async (
 
   // 2. Image Logic (3D Character)
   try {
-    const finalImagePrompt = `${wellnessData.visualizationPrompt}. Style: Cinematic 3D render, Pixar style, cute character, volumetric lighting, soft shadows, extremely detailed, vibrant yet soothing colors, NO TEXT, NO REAL PEOPLE. High quality art.`;
+    if (wellnessData.visualizationPrompt) {
+      // Improved prompt for simpler, clearer, character-focused images
+      const finalImagePrompt = `
+        ${wellnessData.visualizationPrompt}.
+        SUBJECT: Cute stylized 3D character, round friendly shapes, mascot style (like Pixar/Nintendo).
+        ACTION: Demonstrating the wellness activity clearly.
+        STYLE: High-end 3D render, octane render, soft volumetric lighting, pastel color palette.
+        COMPOSITION: Centered subject, plenty of negative space, clean solid or soft gradient background (no clutter, no complex scenery).
+        QUALITY: 4k, hyper-detailed textures, smooth edges.
+        NEGATIVE: Text, watermarks, realistic humans, complex background, noise, blurry, distortion, multiple characters.
+      `.trim().replace(/\s+/g, ' ');
 
-    const imageResponse = await ai.models.generateContent({
-      model: 'gemini-2.5-flash-image',
-      contents: { parts: [{ text: finalImagePrompt }] },
-    });
+      const imageResponse = await ai.models.generateContent({
+        model: 'gemini-2.5-flash-image',
+        contents: { parts: [{ text: finalImagePrompt }] },
+      });
 
-    for (const part of imageResponse.candidates?.[0]?.content?.parts || []) {
-      if (part.inlineData) {
-        wellnessData.visualizationImage = `data:${part.inlineData.mimeType || 'image/png'};base64,${part.inlineData.data}`;
-        break;
+      for (const part of imageResponse.candidates?.[0]?.content?.parts || []) {
+        if (part.inlineData) {
+          wellnessData.visualizationImage = `data:${part.inlineData.mimeType || 'image/png'};base64,${part.inlineData.data}`;
+          break;
+        }
       }
     }
   } catch (err) {
